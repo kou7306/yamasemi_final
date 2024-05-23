@@ -1,0 +1,2 @@
+
+-DCATKIN_DEVEL_PREFIX=/home/yahagi-k/final/devel -DCMAKE_INSTALL_PREFIX=/home/yahagi-k/final/install -G Unix Makefiles
