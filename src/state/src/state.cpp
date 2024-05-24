@@ -21,6 +21,8 @@ double current_x = 0.0;
 double current_y = 0.0;
 double move_distance = 0.0;
 state current_state = STOP;
+// グローバル変数でtf::TransformListenerを保持
+tf::TransformListener* tf_listener;
 
 void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
@@ -66,6 +68,35 @@ void moveWaypoint()
 }
 
 
+// odom座標系からbase_link座標系への速度命令の変換関数
+geometry_msgs::Twist transformTwistToBaseLink(const geometry_msgs::Twist& twist_odom)
+{
+    geometry_msgs::Twist twist_base_link;
+
+    tf::StampedTransform transform;
+    try
+    {
+        tf_listener->lookupTransform("/odom", "/base_link", ros::Time(0), transform);
+    }
+    catch (tf::TransformException &ex)
+    {
+        ROS_ERROR("%s", ex.what());
+        return twist_base_link;
+    }
+
+    tf::Vector3 linear_base_link = transform * tf::Vector3(twist_odom.linear.x, twist_odom.linear.y, 0.0);
+    twist_base_link.linear.x = linear_base_link.x();
+    twist_base_link.linear.y = linear_base_link.y();
+    twist_base_link.angular.z = twist_odom.angular.z;
+
+    return twist_base_link;
+}
+
+
+
+
+
+
 int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "state");
@@ -98,34 +129,36 @@ int main(int argc, char **argv)
                 break;
 
             case RUN1:
-                // 初期位置を保存
-                double start_x = current_x;
-                double start_y = current_y;
-                double target_distance = 4.5; // 目標距離
-                move_distance = 0.0; // 移動距離
-                move_cmd.linear.x = 0.5;
-                move_cmd.angular.z = 0.0;
-                while(move_distance < target_distance) {
-                    if(is_obstacle){
-                        state = AVOIDANCE;
-                        break;
-                    } else {
-                        twist_pub.publish(move_cmd);
-                        rate.sleep();
-                        move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
+                {
+                    // 初期位置を保存
+                    double start_x = current_x;
+                    double start_y = current_y;
+                    double target_distance = 4.5; // 目標距離
+                    move_distance = 0.0; // 移動距離
+                    cmd_vel_odom.linear.x = 0.5; // 例: 0.5m/s の直進速度
+                    cmd_vel_odom.angular.z = 0.0; // 例: 回転速度なし
+
+                    geometry_msgs::Twist move_cmd = transformTwistToBaseLink(cmd_vel_odom);
+                    while (move_distance < target_distance) {
+                        if (is_obstacle) {
+                            state = AVOIDANCE;
+                            break;
+                        } else {
+                            twist_pub.publish(move_cmd);
+                            rate.sleep();
+                            move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
+                        }
                     }
+
+                    move_cmd.linear.x = 0.0;
+                    move_cmd.angular.z = 0.0;
+                    twist_pub.publish(move_cmd);
+                    ros::Duration(1.0).sleep();
+
+                    state = RUN2;
                 }
-
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = 0.0;
-                twist_pub.publish(move_cmd);
-                ros::Duration(1.0).sleep();
-
-                state = RUN2;
-                    
-                
                 break;
-            
+
 
             case RUN2:
                 // 初期位置を保存
@@ -133,7 +166,10 @@ int main(int argc, char **argv)
                 double start_y = current_y;
                 double target_distance = 1.0; // 目標距離
                 move_distance = 0.0; // 移動距離
-                move_cmd.linear.y = 0.5;
+                cmd_vel_odom.linear.x = 0.5;
+                cmd_vel_odom.linear.y = 0.5;
+
+                geometry_msgs::Twist move_cmd = transformTwistToBaseLink(cmd_vel_odom);
                 while(move_distance < target_distance) {
                     if(is_obstacle){
                         state = AVOIDANCE;
@@ -165,9 +201,10 @@ int main(int argc, char **argv)
                 double start_y = current_y;
                 double target_distance = 2.5; // 目標距離
                 move_distance = 0.0; // 移動距離
-                //現在のロボットの姿勢を基準にしている
-                move_cmd.linear.x = -0.4;
-                move_cmd.linear.y = 0.3;
+                cmd_vel_odom.linear.x= 0.5;
+                cmd_vel_odom.linear.y = 0.5;
+
+                geometry_msgs::Twist move_cmd = transformTwistToBaseLink(cmd_vel_odom);
                 while(move_distance < target_distance) {
                     if(is_obstacle){
                         current_state = Run3
