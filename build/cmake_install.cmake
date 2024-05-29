@@ -131,6 +131,8 @@ endif()
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for each subdirectory.
   include("/home/yahagi-k/final/build/gtest/cmake_install.cmake")
+  include("/home/yahagi-k/final/build/state/cmake_install.cmake")
+  include("/home/yahagi-k/final/build/hokuyo_node/cmake_install.cmake")
 
 endif()
 
