@@ -9,6 +9,10 @@ project(state)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
   roscpp
+  std_msgs
+  geometry_msgs
+  nav_msgs
+  tf
 )
 
 ## System dependencies are found with CMake's conventions
@@ -117,7 +121,9 @@ include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
 )
+add_executable(state src/state.cpp)
 
+target_link_libraries(state ${catkin_LIBRARIES})
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/state.cpp

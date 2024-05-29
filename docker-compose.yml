@@ -1,0 +1,10 @@
+version: "3"
+services:
+  ros_noetic:
+    image: osrf/ros:noetic-desktop-full
+    container_name: ros_noetic_container
+    volumes:
+      - ./src:/root/catkin_ws/src
+    command: /bin/bash -c "source /opt/ros/noetic/setup.bash && apt-get update && apt-get install -y ros-noetic-ypspur && cd /root/catkin_ws && catkin_make && bash"
+    tty: true
+    stdin_open: true
