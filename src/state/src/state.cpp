@@ -120,7 +120,7 @@ int main(int argc, char **argv)
                     state = AVOIDANCE;
                 }
                 else{
-                    state = RUN1;
+                    state = current_state;
                 }            
                 break;
 
@@ -315,7 +315,9 @@ int main(int argc, char **argv)
                     rate.sleep();
                 }
 
-                state = current_state;         
+                is_obstacle = false;
+
+                state = STOP;         
 
                 break;
             
