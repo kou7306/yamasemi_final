@@ -1,8 +1,9 @@
 <launch>
-<arg name="device" default="/dev/ttyACM1"/>
-<arg name="robot_name" default="M1"/>
-
-  <node name="ypspur_ros_bridge" pkg="ypspur_ros_bridge" type="ypspur_ros_bridge"/>
+<arg name="device" default="/dev/ttyACM0"/>
+<arg name="robot_name" default="beego"/>
+<!-- 
+  <node name="rviz" pkg="rviz"  type="rviz"/> -->
+  <!-- <node name="ypspur_ros_bridge" pkg="ypspur_ros_bridge" type="ypspur_ros_bridge"/> -->
   <node name="urg_node" pkg="urg_node"  type="urg_node">
     <param name="min_ang"     value="-2.4422222"/>
     <param name="max_ang"     value="2.4422222"/>
@@ -10,12 +11,12 @@
   </node>
 
   <node pkg="ypspur_ros" type="ypspur_ros" name="ypspur_ros" required="true">
-      <param name="param_file" value="/home/yahagi-k/researches/programs/platform/yp-robot-params/robot-params/M1.param"/>
+      <param name="param_file" value="/home/yahagi-k/researches/programs/platform/yp-robot-params/robot-params/beego.param"/>
       <param name="port" value="/dev/serial/by-id/usb-T-frog_project_T-frog_Driver-if00"/>
       <param name="compatible" value="1"/>
-      <param name="odom_id" value="$(arg robot_name)/odom"/>
-      <param name="base_link_id" value="$(arg robot_name)/base_link"/>
+      <param name="odom_id" value="odom"/>
+      <param name="base_link_id" value="base_link"/>
   </node>
-
-  <node pkg="state" type="state" name="state" required="true"/>
+<!-- 
+  <node pkg="state" type="state" name="state" required="true"/> -->
 </launch>
