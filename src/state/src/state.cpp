@@ -35,6 +35,8 @@ geometry_msgs::Twist move_cmd;
 geometry_msgs::Twist cmd_vel_odom;
 geometry_msgs::Point target_point;
 geometry_msgs::Point odom_point;
+geometry_msgs::Point target;
+geometry_msgs::Point current_point;
 
 // グローバル変数
 geometry_msgs::TransformStamped global_transform;
@@ -75,7 +77,7 @@ void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
     for (int i = 0; i < scan.ranges.size(); i++)
     {
         double angle=std::fabs(scan.angle_min + scan.angle_increment * i);
-        if(i > scan.ranges.size()/2 -10 && i < scan.ranges.size()/2 + 10)
+        if(i > scan.ranges.size()/2 -15 && i < scan.ranges.size()/2 + 15)
         {
             // nan値を除外し、範囲内かつ障害物距離よりも小さい場合に障害物を検知
             if (!std::isnan(scan.ranges[i]) && scan.ranges[i] < obstacle_distance && scan.ranges[i] > 0.2) {
@@ -162,12 +164,11 @@ void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twis
 
         geometry_msgs::Twist cmd_vel;
         // 目標角度を計算
-        double target_angle = std::atan2(target_base_link.y - current_point.y, target_base_link.x - current_point.x);
             // 角度差を-PIからPIの範囲に収める
         if (target_angle > M_PI) {
-            target_angle -= 2 * M_PI;
+            double target_angle -= 2 * M_PI;
         } else if (target_angle < -M_PI) {
-            target_angle += 2 * M_PI;
+            double target_angle += 2 * M_PI;
         }
         if(flag==true){
 
@@ -210,6 +211,71 @@ void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twis
 }
 
 
+void moveAvoidance(ros::Publisher& twist_pub,const geometry_msgs::Point& target,const bool form)
+{
+    // 移動速度を設定
+    speed= 0.2;  // 移動速度 0.5m/s
+    current_point.x = 0.0;
+    current_point.y = 0.0;
+    current_point.z = 0.0; 
+
+    // ロボットを目標座標に向かって移動させる
+    while (ros::ok() && std::abs(target.y)-current_point.y > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
+        geometry_msgs::Twist cmd_vel;
+        // 目標角度を計算
+        if(form == true){
+            double target_angle = M_PI /2;
+        }else{
+            double target_angle = -M_PI /2;
+        }
+            // 角度差を-PIからPIの範囲に収める
+        // if (target_angle > M_PI) {
+        //     target_angle -= 2 * M_PI;
+        // } else if (target_angle < -M_PI) {
+        //     target_angle += 2 * M_PI;
+        // }
+        if(flag==true){
+
+
+            double angular_speed = 0.5;  // 回転速度 0.5rad/s
+            // 角速度から回転にかかる時間を計算
+            double rotation_time = std::abs(target_angle) / angular_speed;
+
+            // 回転を開始する
+            cmd_vel.linear.x = 0.0;
+            cmd_vel.linear.y = 0.0;
+            cmd_vel.angular.z = angular_speed;
+            twist_pub.publish(cmd_vel);
+            ros::Duration(rotation_time).sleep();
+            flag=false;
+            ROS_INFO("flag: %d", flag);
+        }
+
+        // 移動速度を設定
+        cmd_vel.angular.z = 0.0;  // 回転速度は0に戻す
+        cmd_vel.linear.x = speed;
+
+        // メッセージを配信して移動を行う
+        twist_pub.publish(cmd_vel);
+        ros::Duration(0.1).sleep();
+
+
+        current_point.y = current_point.y + 0.1 * speed;
+    }
+    flag=true;
+
+
+
+    // 移動を停止
+    geometry_msgs::Twist stop_cmd;
+    stop_cmd.linear.x = 0.0;
+    stop_cmd.linear.y = 0.0;
+    stop_cmd.angular.z = 0.0;
+    twist_pub.publish(stop_cmd);
+
+    ros::Duration(1.0).sleep();
+}
+
 
 
 int main(int argc, char **argv)
@@ -217,7 +283,7 @@ int main(int argc, char **argv)
 	ros::init(argc, argv, "state");
 	ros::NodeHandle nh;
 	ros::Publisher twist_pub = nh.advertise<geometry_msgs::Twist>("cmd_vel", 100); //速度命令を送るPublisher
-    ros::Subscriber odom_sub = nh.subscribe("odom", 100, odomCallback); //オドメトリを受け取るSubscriber 
+    ros::Subscriber odom_sub = nh.subscribe("odom", 10, odomCallback); //オドメトリを受け取るSubscriber 
     ros::Subscriber scan_sub = nh.subscribe("scan", 10, obstacleDetect); //スキャンデータを受け取るSubscriber
     ros::Subscriber tf_sub = nh.subscribe("tf", 10, tfCallback); //tfデータを受け取るSubscriber
     tf_listener = new tf::TransformListener();
@@ -344,63 +410,20 @@ int main(int argc, char **argv)
 
             case AVOIDANCE:
                 ROS_INFO("AVOIDANCE");
-                target_point.x = 0.0;  // ターゲットのx座標
-                target_point.y = 1.0;  // ターゲットのy座標
-                speed= 0.3;  // 移動速度 0.5m/s
-                while (ros::ok() && std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2)) > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
-                        ros::spinOnce();
-                        if(is_obstacle){
-                            ROS_INFO("avo1");
-                            state = AVOIDANCE;
-                            break;
-                        }
-                        // 移動方向を計算
-                        double distance = std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2));
-                        geometry_msgs::Twist cmd_vel;
-                        cmd_vel.linear.x = speed * (target_point.x - 0) / distance;
-                        cmd_vel.linear.y = speed * (target_point.y) / distance;
-                        cmd_vel.angular.z = 0.0;  // 回転速度はゼロ
-                        twist_pub.publish(cmd_vel);
-                        ros::Duration(0.1).sleep();  // 0.1秒間のスリープ
-                    }
-                target_point.x = 1.0;  // ターゲットのx座標
-                target_point.y = 0.0;  // ターゲットのy座標
-                while (ros::ok() && std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2)) > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
-                        ros::spinOnce();
-                        if(is_obstacle){
-                            ROS_INFO("avo2");
-                            state = AVOIDANCE;
-                            break;
-                        }
-                        // 移動方向を計算
-                        double distance = std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2));
-                        geometry_msgs::Twist cmd_vel;
-                        cmd_vel.linear.x = speed * (target_point.x - 0) / distance;
-                        cmd_vel.linear.y = speed * (target_point.y) / distance;
-                        cmd_vel.angular.z = 0.0;  // 回転速度はゼロ
-                        twist_pub.publish(cmd_vel);
-                        ros::Duration(0.1).sleep();  // 0.1秒間のスリープ
-                    }
-                target_point.x = 0.0;  // ターゲットのx座標
-                target_point.y = -1.0;  // ターゲットのy座標
-                while (ros::ok() && std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2)) > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
-                        ros::spinOnce();
-                        if(is_obstacle){
-                            ROS_INFO("avo3");
-                            state = AVOIDANCE;
-                            break;
-                        }
-                        // 移動方向を計算
-                        double distance = std::sqrt(pow(target_point.x - 0, 2) + pow(target_point.y -0, 2));
-                        geometry_msgs::Twist cmd_vel;
-                        cmd_vel.linear.x = speed * (target_point.x - 0) / distance;
-                        cmd_vel.linear.y = speed * (target_point.y) / distance;
-                        cmd_vel.angular.z = 0.0;  // 回転速度はゼロ
-                        twist_pub.publish(cmd_vel);
-                        ros::Duration(0.1).sleep();  // 0.1秒間のスリープ
-                    }
-                
+                ROS_INFO("avoidance1");
+                target.x = 0.0;  // ターゲットのx座標
+                target.y = 1.0 ;  // ターゲットのy座標
+                moveAvoidance(twist_pub,target,true);
 
+                ROS_INFO("avoidance2");
+                target.x = 0.0;  // ターゲットのx座標
+                target.y = -2.0;  // ターゲットのy座標
+
+                moveAvoidance(twist_pub,target,false);
+                ROS_INFO("avoidance3");
+                target.x = 0.0;  // ターゲットのx座標
+                target.y = -1.0;  // ターゲットのy座標   
+                moveAvoidance(twist_pub,target,false);
                 is_obstacle=false;
 
                 state = current_state;         
