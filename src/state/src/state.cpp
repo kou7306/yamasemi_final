@@ -37,6 +37,7 @@ geometry_msgs::Point target_point;
 geometry_msgs::Point current_pose;
 geometry_msgs::Point target;
 geometry_msgs::Point current_point;
+double roll, pitch, yaw;
 
 // グローバル変数
 geometry_msgs::TransformStamped global_transform;
@@ -46,23 +47,17 @@ tf::StampedTransform transform_tf;
 void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
 {
     current_pose = msg.pose.pose
+    // クォータニオンからオイラー角（ロール、ピッチ、ヨー）を取得
+    tf::Quaternion quat;
+    tf::quaternionMsgToTF(msg->pose.pose.orientation, quat);
+    
+
+    tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+
+    // ヨー角を表示
+    ROS_INFO("Yaw: %f", yaw);
 }
 
-
-// // tfメッセージのコールバック関数
-// void tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg)
-// {
-//     // メッセージからtransformを抽出
-//     for (const auto& transform: msg->transforms)
-//     {
-//         if (transform.child_frame_id == "base_link" && transform.header.frame_id == "odom")
-//         {
-//             // odomからbase_linkへの変換情報を見つけたら、グローバル変数に格納
-//             global_transform = transform;
-//             break;
-//         }
-//     }
-// }
 
 
 //　障害物検知
@@ -95,194 +90,110 @@ void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
 
 
 
-// odom座標系からbase_link座標系への変換関数
-// geometry_msgs::Point transformPointToBaseLink(const geometry_msgs::Point& point_odom)
-// {
-//     geometry_msgs::Point point_base_link;
+//通常移動（座標で指定）
 
-//     tf::StampedTransform transform;
-    // try
-    // {
-    //     tf_listener->lookupTransform("odom", "base_link", ros::Time(0), transform);
-    // }
-    // catch (tf::TransformException &ex)
-    // {
-    //     ROS_ERROR("%s", ex.what());
-    //     return point_base_link;
-    // }
-
-    // ROS_INFO("point_odom: (%f, %f)", point_odom.x, point_odom.y);
-    // ROS_INFO("global_transform: (%f, %f, %f)", global_transform.transform.translation.x, global_transform.transform.translation.y, global_transform.transform.translation.z);
-    // if(global_transform.transform.translation.x == 0.0 && global_transform.transform.translation.y == 0.0 && global_transform.transform.translation.z == 0.0)
-    // {
-    //     return point_odom;
-    // }
-
-    // tf::Vector3 point_odom_tf(point_odom.x, point_odom.y, point_odom.z);
-    // tf::transformStampedMsgToTF(global_transform, transform_tf);  // global_transformを使って変換
-
-    // // ここで変換を行います
-    // tf::Vector3 point_base_link_tf = transform_tf * point_odom_tf;
-
-//     point_base_link.x = point_odom.x-odom_point.x;
-//     point_base_link.y = point_odom.y-odom_point.y;
-
-
-//     return point_base_link;
-// }
-
-
-
-void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twist_pub)
+void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twist_pub, const geometry_msgs::Pose& current_pose)
 {
     // 現在のロボットの位置を取得
     geometry_msgs::Point current_point;
-    // ここで現在の位置を取得する処理が必要
-    current_point.x = 0.0;
-    current_point.y = 0.0;
-    current_point.z = 0.0; 
+    current_point.x = current_pose.position.x;
+    current_point.y = current_pose.position.y;
+    current_point.z = current_pose.position.z; 
 
-    // ターゲット座標をベースリンク座標系に変換
+    // ターゲット座標をベースリンク座標系に変換（この関数があることを仮定）
     // geometry_msgs::Point target_base_link = transformPointToBaseLink(target_point);
 
-    // ROS_INFO("target_base_link: (%f, %f)", target_base_link.x, target_base_link.y);
-    ROS_INFO("odom_point: (%f, %f)", odom_point.x, odom_point.y);
+    ROS_INFO("odom_point: (%f, %f)", current_point.x, current_point.y);
 
-    start_x = odom_point.x;
-    start_y = odom_point.y;
-    double distance_to_target = std::sqrt((target_point.x - current_pose.position.x)**2 +
-                                       (target_point.y - current_pose.position.y)**2);
-    
-    double angle_to_target = std::atan2(target_point.y - current_pose.position.y,
-                                    target_point.x - current_pose.position.x)
-  
-    angle_to_target = std::tan2(math.sin(angle_to_target), math.cos(angle_to_target))
+    double angle_to_target = std::atan2(target_point.y - current_point.y, target_point.x - current_point.x);
+    if(target_point.x > current_point.x && target_point.y > current_point.y){
+        angle_to_target = M_PI / 2 - angle_to_target + yaw;
+    }else if(target_point.x > current_point.x && target_point.y < current_point.y){
+        angle_to_target = -(M_PI / 2 - angle_to_target + yaw);
+    }else if(target_point.x < current_point.x && target_point.y < current_point.y){
+        angle_to_target = -(M_PI / 2 + angle_to_target + yaw);
+    }else if(target_point.x < current_point.x && target_point.y > current_point.y){
+        angle_to_target = M_PI / 2 + angle_to_target + yaw;
+    }
+    double angler_speed = 0.5;
 
-    double time_to_rotate = std::abs(angle_to_target) / 0.5; 
+    double time_to_rotate = std::abs(angle_to_target) / angler_speed; 
 
     ros::Time start_time = ros::Time::now();
+    
 
-    while(ros::ok() &&  (ros::Time::now() - start_time).toSec() < time_to_rotate){
-        geometry_msgs::Twist twist;
-        twist.angular.z = 0.5;
-         
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_rotate)
+    {
+        ros::spinOnce();  
+        move_cmd.angular.z = angler_speed;
+        move_cmd.linear.x = 0.0;
+        move_cmd.linear.y = 0.0;
+        twist_pub.publish(move_cmd);
     }
 
+    double distance_to_target = std::sqrt(std::pow(target_point.x - current_point.x, 2) + 
+                                          std::pow(target_point.y - current_point.y, 2));
 
+    double speed = 0.3;
 
-    // 移動速度を設定
-    speed= 0.3;  // 移動速度 0.5m/s
+    double time_to_move = distance_to_target / speed;
 
-    // ロボットを目標座標に向かって移動させる
-    while (ros::ok() && std::sqrt(pow(target_base_link.x - current_point.x, 2) + pow(target_base_link.y - current_point.y, 2)) > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
+    start_time = ros::Time::now();
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_move)
+    {
         ros::spinOnce();
-        if(is_obstacle){
-            ROS_INFO("change state");
-            state = AVOIDANCE;
-            break;
-        }
-
-        geometry_msgs::Twist cmd_vel;
-        // 目標角度を計算
-            // 角度差を-PIからPIの範囲に収める
-        if (target_angle > M_PI) {
-            double target_angle -= 2 * M_PI;
-        } else if (target_angle < -M_PI) {
-            double target_angle += 2 * M_PI;
-        }
-        if(flag==true){
-
-
-            double angular_speed = 0.5;  // 回転速度 0.5rad/s
-            // 角速度から回転にかかる時間を計算
-            double rotation_time = std::abs(target_angle) / angular_speed;
-
-            // 回転を開始する
-            cmd_vel.linear.x = 0.0;
-            cmd_vel.linear.y = 0.0;
-            cmd_vel.angular.z = angular_speed;
-            twist_pub.publish(cmd_vel);
-            ros::Duration(rotation_time).sleep();
-            flag=false;
-            ROS_INFO("flag: %d", flag);
-        }
-
-        // 移動速度を設定
-        cmd_vel.angular.z = 0.0;  // 回転速度は0に戻す
-        cmd_vel.linear.x = speed;
-
-        // メッセージを配信して移動を行う
-        twist_pub.publish(cmd_vel);
-        ros::Duration(0.1).sleep();
-
-        // 位置を更新
-        current_point.x = odom_point.x - start_x;
-        current_point.y = odom_point.y - start_y;
+        move_cmd.angular.z = 0.0;
+        move_cmd.linear.x = speed;
+        move_cmd.linear.y = 0.0;
+        twist_pub.publish(move_cmd);
     }
-    flag=true;
-    // 移動を停止
-    geometry_msgs::Twist stop_cmd;
-    stop_cmd.linear.x = 0.0;
-    stop_cmd.linear.y = 0.0;
-    stop_cmd.angular.z = 0.0;
-    twist_pub.publish(stop_cmd);
-
+    
     ros::Duration(1.0).sleep();
 }
 
 
+// 障害物回避
 void moveAvoidance(ros::Publisher& twist_pub,const double distance,const bool form)
 {
-    // 移動速度を設定
-    speed= 0.2;  // 移動速度 0.5m/s
-    double current_distance = 0.0
-
-    // ロボットを目標座標に向かって移動させる
-    while (ros::ok() && distance - current_distance > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
-        geometry_msgs::Twist cmd_vel;
-        // 目標角度を計算
-        if(form == true){
-            double target_angle = M_PI /2;
-        }else{
-            double target_angle = -M_PI /2;
-        }
-            // 角度差を-PIからPIの範囲に収める
-        // if (target_angle > M_PI) {
-        //     target_angle -= 2 * M_PI;
-        // } else if (target_angle < -M_PI) {
-        //     target_angle += 2 * M_PI;
-        // }
-        if(flag==true){
-
-
-            double angular_speed = 0.5;  // 回転速度 0.5rad/s
-            // 角速度から回転にかかる時間を計算
-            double rotation_time = std::abs(target_angle) / angular_speed;
-
-            // 回転を開始する
-            cmd_vel.linear.x = 0.0;
-            cmd_vel.linear.y = 0.0;
-            cmd_vel.angular.z = angular_speed;
-            twist_pub.publish(cmd_vel);
-            ros::Duration(rotation_time).sleep();
-            flag=false;
-            ROS_INFO("flag: %d", flag);
-        }
-
-        // 移動速度を設定
-        cmd_vel.angular.z = 0.0;  // 回転速度は0に戻す
-        cmd_vel.linear.x = speed;
-        cmd_vel.lineer.y = 0.0;
-
-        // メッセージを配信して移動を行う
-        twist_pub.publish(cmd_vel);
-        ros::Duration(0.1).sleep();
-
-
-        current_distance = current_distance + 0.1 * speed;
+    
+    // 目標角度を計算
+    if(form == true){
+        double target_angle = M_PI /2;
+    }else{
+        double target_angle = -M_PI /2;
     }
 
-    flag=true;
+
+
+    double angular_speed = 0.5;  // 回転速度 0.5rad/s
+    // 角速度から回転にかかる時間を計算
+    double time_to_rotation = std::abs(target_angle) / angular_speed;
+
+    ros::Time start_time = ros::Time::now();
+
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_rotate){
+        ros::spinOnce();
+        // 回転を開始する
+        move_cmd.linear.x = 0.0;
+        move_cmd.linear.y = 0.0;
+        move_cmd.angular.z = angular_speed;
+        twist_pub.publish(move_cmd);
+    }
+
+    double speed = 0.2;
+    double time_to_move = distance / speed;
+    ros::Time start_time = ros::Time::now();
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_move){
+        ros::spinOnce();
+        // 移動速度を設定
+        move_cmd.angular.z = 0.0;  // 回転速度は0に戻す
+        move_cmd.linear.x = speed;
+        move_cmd.lineer.y = 0.0;
+
+        // メッセージを配信して移動を行う
+        twist_pub.publish(move_cmd);
+    }
+
 
     // 移動を停止
     geometry_msgs::Twist stop_cmd;
