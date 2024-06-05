@@ -16,32 +16,45 @@
 enum State {STOP, RUN1, RUN2, RUN3, RUN4, RUN5, AVOIDANCE, FINISH};
 
 sensor_msgs::LaserScan scan;
-bool is_obstacle = false;
-double current_x = 0.0;
-double current_y = 0.0;
 double move_distance = 0.0;
-double start_x;
-double start_y;
-double target_distance; 
+bool is_obstacle = false;
 double current_time;
-double elapsed_time;
 double angle;
-double start_time;
-double radius;  // 円の半径
-double angular_speed;  // 角速度（回転速度）
-double arc_length;  // 円周の長さ
+double speed;
+double distance1;
+double distance2;
+double distance3;
 State state = STOP;
-State current_state = STOP;
+State current_state = RUN1;
 // グローバル変数でtf::TransformListenerを保持
 tf::TransformListener* tf_listener;
 geometry_msgs::Twist move_cmd;
 geometry_msgs::Twist cmd_vel_odom;
+geometry_msgs::Point current_pose;
+geometry_msgs::Point target;
+geometry_msgs::Point current_point;
+ros::Time start_time;
+double robot_x, robot_y;
+double roll, pitch, yaw;
+geometry_msgs::Quaternion robot_r;
 
 
+geometry_msgs::Twist twist; // 指令する速度、角速度
+
+std::map<std::string, double> params_; // パラメータをここに格納
+geometry_msgs::PoseStamped goal; // 目標地点
+
+// グローバル変数
+geometry_msgs::TransformStamped global_transform;
+tf::StampedTransform transform_tf;
+
+
+
+
+//　障害物検知
 void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
     // scan data
-    
     scan = *msg;
 
     double obstacle_distance = 1.0; // 障害物と判定する距離
@@ -51,46 +64,175 @@ void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
     for (int i = 0; i < scan.ranges.size(); i++)
     {
         double angle=std::fabs(scan.angle_min + scan.angle_increment * i);
-        if(3.0 > 1.0 * sin(angle))
+        if(i > scan.ranges.size()/2 -15 && i < scan.ranges.size()/2 + 15)
         {
-            if(scan.ranges[i] < obstacle_distance)
-            {
+            // nan値を除外し、範囲内かつ障害物距離よりも小さい場合に障害物を検知
+            if (!std::isnan(scan.ranges[i]) && scan.ranges[i] < obstacle_distance && scan.ranges[i] > 0.2) {
+                ROS_INFO("distance: %f", scan.ranges[i]);
+                ROS_INFO("index: %d", i);
+                ROS_INFO("obstacle detected");
                 is_obstacle = true;
                 break;
+            }else{
+                is_obstacle = false;
             }
         }
-
     }
 }
 
-
-
-// odom座標系からbase_link座標系への速度命令の変換関数
-geometry_msgs::Twist transformTwistToBaseLink(const geometry_msgs::Twist& twist_odom)
+// オドメトリのコールバック
+void odomCallback(const nav_msgs::Odometry::ConstPtr &msg)
 {
-    geometry_msgs::Twist twist_base_link;
+	robot_x = msg->pose.pose.position.x;
+	robot_y = msg->pose.pose.position.y;
+	robot_r = msg->pose.pose.orientation;
+}
 
-    tf::StampedTransform transform;
-    try
-    {
-        tf_listener->lookupTransform("/odom", "/base_link", ros::Time(0), transform);
-    }
-    catch (tf::TransformException &ex)
-    {
-        ROS_ERROR("%s", ex.what());
-        return twist_base_link;
-    }
+// クォータニオンをオイラーに変換                                               
+void geometry_quat_to_rpy(double &roll, double &pitch, double &yaw, geometry_msgs::Quaternion geometry_quat)
+{
+    tf::Quaternion quat;
+    quaternionMsgToTF(geometry_quat, quat);
+    tf::Matrix3x3(quat).getRPY(roll, pitch, yaw);
+}
 
-    tf::Vector3 linear_base_link = transform * tf::Vector3(twist_odom.linear.x, twist_odom.linear.y, 0.0);
-    twist_base_link.linear.x = linear_base_link.x();
-    twist_base_link.linear.y = linear_base_link.y();
-    twist_base_link.angular.z = twist_odom.angular.z;
+//　goalで指定した位置に近いかの判定を行う
+bool near_position(geometry_msgs::PoseStamped goal)
+{
+    // ROS_INFO("robot_x: %f", robot_x);
+    // ROS_INFO("robot_y: %f", robot_y);
+    // ROS_INFO("goal_x: %f", goal.pose.position.x);
+    // ROS_INFO("goal_y: %f", goal.pose.position.y);
+	double difx = robot_x - goal.pose.position.x;
+	double dify = robot_y - goal.pose.position.y;
+	return (sqrt(difx * difx + dify * dify) < 0.01);
+}
 
-    return twist_base_link;
+
+void go_position(geometry_msgs::PoseStamped goal)
+{
+    double k_v = 0.3; // 速度の係数
+    double k_w = 1.6; // 角速度の係数
+	
+	// 指令する速度と角速度
+	double v = 0.0;
+	double w = 0.0;
+
+	//　角速度の計算
+	double theta = atan2(goal.pose.position.y - robot_y, goal.pose.position.x - robot_x);
+	while (theta <= -M_PI || M_PI <= theta)
+	{
+		if (theta <= -M_PI)
+			theta = theta + 2 * M_PI;
+		else
+			theta = theta - 2 * M_PI;
+	}
+
+	// 現在のロボットのroll, pitch, yawを計算
+	geometry_quat_to_rpy(roll, pitch, yaw, robot_r);
+
+	while (yaw <= -M_PI || M_PI <= yaw)
+	{
+		if (yaw <= -M_PI)
+			yaw = yaw + 2 * M_PI;
+		else
+			yaw = yaw - 2 * M_PI;
+	}
+
+	theta = theta - yaw; //thetaに目標とする点に向くために必要となる角度を格納
+
+	while (theta <= -M_PI || M_PI <= theta)
+	{
+		if (theta <= -M_PI)
+			theta = theta + 2 * M_PI;
+		else
+			theta = theta - 2 * M_PI;
+	}
+
+	w = k_w * theta;
+
+	// 速度の計算(追従する点が自分より前か後ろかで計算を変更)
+	if (theta <= M_PI / 2 && theta >= -M_PI / 2)
+		v = k_v ;
+	else
+		v = -k_v ;
+	
+	// publishする値の格納
+	twist.linear.x = v;
+	twist.linear.y = 0.0;
+	twist.linear.z = 0.0;
+	twist.angular.x = 0.0;
+	twist.angular.y = 0.0;
+	twist.angular.z = w;
+
+
 }
 
 
 
+
+
+// 障害物回避
+void moveAvoidance(ros::Publisher& twist_pub,const double distance,const bool form)
+{
+
+
+    double target_angle;
+    // 目標角度を計算
+    if(form == true){
+        target_angle = M_PI /2;
+    }else{
+        target_angle = -M_PI /2;
+    }
+
+
+
+    double angular_speed = 0.5;  // 回転速度 0.5rad/s
+    // 角速度から回転にかかる時間を計算
+    double time_to_rotation = std::abs(target_angle) / angular_speed;
+
+    start_time = ros::Time::now();
+
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_rotation){
+        ros::spinOnce();
+        // 回転を開始する
+        move_cmd.linear.x = 0.0;
+        move_cmd.linear.y = 0.0;
+        if(target_angle > 0){
+            move_cmd.angular.z = angular_speed;
+        }       
+        else{
+            move_cmd.angular.z = -angular_speed;
+        }
+            
+    
+        twist_pub.publish(move_cmd);
+    }
+
+    double speed = 0.2;
+    double time_to_move = distance / speed;
+    ros::Time start_time = ros::Time::now();
+    while(ros::ok() && (ros::Time::now() - start_time).toSec() < time_to_move){
+        ros::spinOnce();
+        // 移動速度を設定
+        move_cmd.angular.z = 0.0;  // 回転速度は0に戻す
+        move_cmd.linear.x = speed;
+        move_cmd.linear.y = 0.0;
+
+        // メッセージを配信して移動を行う
+        twist_pub.publish(move_cmd);
+    }
+
+
+    // 移動を停止
+    geometry_msgs::Twist stop_cmd;
+    stop_cmd.linear.x = 0.0;
+    stop_cmd.linear.y = 0.0;
+    stop_cmd.angular.z = 0.0;
+    twist_pub.publish(stop_cmd);
+
+    ros::Duration(1.0).sleep();
+}
 
 
 
@@ -98,26 +240,50 @@ int main(int argc, char **argv)
 {
 	ros::init(argc, argv, "state");
 	ros::NodeHandle nh;
-	ros::Publisher twist_pub = nh.advertise<geometry_msgs::Twist>("ypspur_ros/cmd_vel", 100); //速度命令を送るPublisher
-    // ros::Subscriber odom_sub = nh.subscribe("ypspur_ros/odom", 100, odomCallback); //オドメトリを受け取るSubscriber 
-    ros::Subscriber scan_sub = nh.subscribe("scan", 100, obstacleDetect); //スキャンデータを受け取るSubscriber
+	ros::Publisher twist_pub = nh.advertise<geometry_msgs::Twist>("cmd_vel", 100); //速度命令を送るPublisher
+    ros::Subscriber odom_sub = nh.subscribe("odom", 10, odomCallback); //オドメトリを受け取るSubscriber 
+    ros::Subscriber scan_sub = nh.subscribe("scan", 10, obstacleDetect); //スキャンデータを受け取るSubscriber
+    tf_listener = new tf::TransformListener();
+
     state = STOP;
 
-    ros::Rate rate(10);
+	ros::Rate loop_rate(100);
 
-
-
-    //scanデータの分割
-
+	// odometryの値の初期化
+	robot_x = 0.0;
+	robot_y = 0.0;
+	robot_r.x = 0.0;
+	robot_r.y = 0.0;
+	robot_r.z = 0.0;
+	robot_r.w = 1.0;
+    ros::spinOnce();
 
 
 	while (ros::ok())
 	{
+        ros::spinOnce();
         switch (state)
         {
             case STOP:
+                    move_cmd.linear.x = 0.0;
+                    move_cmd.linear.y = 0.0;
+                    move_cmd.angular.z = 0.0;
+                    twist_pub.publish(move_cmd);
+            
                 if(is_obstacle){
-                    state = AVOIDANCE;
+                    start_time = ros::Time::now(); // 現在の時間を取得
+                    ros::Duration wait_duration(3.0); // 3秒間の待機時間を設定
+
+                    while (ros::Time::now() - start_time < wait_duration) {
+                        ros::Duration(0.1).sleep(); // 0.1秒ごとに待機してループを制御
+                    }
+
+                    if(is_obstacle){
+                        state = AVOIDANCE;
+                    }
+                    else{
+                        state = current_state;
+                    }
                 }
                 else{
                     state = current_state;
@@ -126,199 +292,199 @@ int main(int argc, char **argv)
 
             case RUN1:
                 {
-                    // 初期位置を保存
-                    start_x = current_x;
-                    start_y = current_y;
-                    target_distance = 4.5; // 目標距離
-                    move_distance = 0.0; // 移動距離
-                    cmd_vel_odom.linear.x = 0.5; // 例: 0.5m/s の直進速度
-                    cmd_vel_odom.angular.z = 0.0; // 例: 回転速度なし
-                    // ロボット座標に変換
-                    move_cmd = transformTwistToBaseLink(cmd_vel_odom);
-                    while (move_distance < target_distance) {
-                        if (is_obstacle) {
-                            current_state = RUN1;
-                            state = AVOIDANCE;
+                    
+                    ROS_INFO("RUN1");
+                    
+                    goal.pose.position.x = 3.0;  // ターゲットのx座標
+                    goal.pose.position.y = 0.0;
+
+                    while (ros::ok())
+                    {
+                        ros::spinOnce();
+                        if(is_obstacle){
+                            state = STOP;
                             break;
-                        } else {
-                            twist_pub.publish(move_cmd);
-                            rate.sleep();
-                            move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
                         }
+                        
+
+                        // 比例制御で近づき、近づき終えたら停止
+                        go_position(goal);
+                        if (near_position(goal))
+                        {
+                            ROS_INFO("near_position");
+                            twist.linear.x = 0.0;
+                            twist.angular.z = 0.0;
+                            state = RUN2;
+                            twist_pub.publish(twist);
+                            break;
+                        }
+                        twist_pub.publish(twist);
+
+                        loop_rate.sleep();
                     }
 
-                    move_cmd.linear.x = 0.0;
-                    move_cmd.angular.z = 0.0;
-                    twist_pub.publish(move_cmd);
-                    ros::Duration(1.0).sleep();
-
-                    state = RUN2;
                 }
+
                 break;
 
 
             case RUN2:
-                // 初期位置を保存
-                start_x = current_x;
-                start_y = current_y;
-                target_distance = 1.0; // 目標距離
-                move_distance = 0.0; // 移動距離
-                cmd_vel_odom.linear.y = 0.5;
+                current_state = RUN2;
+                ROS_INFO("RUN2");
+                
+                goal.pose.position.x = 3.0;  // ターゲットのx座標
+                goal.pose.position.y = 1.0;
 
-                move_cmd = transformTwistToBaseLink(cmd_vel_odom);
-                while(move_distance < target_distance) {
+                while (ros::ok())
+                {
+                    ros::spinOnce();
                     if(is_obstacle){
-                        current_state = RUN2;
-                        state = AVOIDANCE;
+                        state = STOP;
                         break;
-                    } else {
-                        twist_pub.publish(move_cmd);
-                        rate.sleep();
-                        move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
                     }
-                }
-
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = 0.0;
-                
-                twist_pub.publish(move_cmd);
-                ros::Duration(1.0).sleep();
-
-                state = RUN3;
                     
-                
+
+                    // 比例制御で近づき、近づき終えたら停止
+                    go_position(goal);
+                    if (near_position(goal))
+                    {
+                        twist.linear.x = 0.0;
+                        twist.angular.z = 0.0;
+                        state = RUN3;
+                        twist_pub.publish(twist);
+                        break;
+                    }
+                    twist_pub.publish(twist);
+
+                    loop_rate.sleep();
+                }
+          
+            
                 break;
 
 
     
 
             case RUN3:
-                // 初期位置を保存
-                start_x = current_x;
-                start_y = current_y;
-                target_distance = 2.5; // 目標距離
-                move_distance = 0.0; // 移動距離
-                cmd_vel_odom.linear.x= -0.3;
-                cmd_vel_odom.linear.y = -0.4;
+                current_state = RUN3;
+                ROS_INFO("RUN3");
+                
+                goal.pose.position.x = 2.0;  // ターゲットのx座標
+                goal.pose.position.y = -1.5;
 
-                move_cmd = transformTwistToBaseLink(cmd_vel_odom);
-                while(move_distance < target_distance) {
+                while (ros::ok())
+                {
+                    ros::spinOnce();
                     if(is_obstacle){
-                        current_state = RUN3;
-                        state = AVOIDANCE;
+                        state = STOP;
                         break;
-                    } else {
-                        twist_pub.publish(move_cmd);
-                        rate.sleep();
-                        move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
                     }
-                }
-
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = 0.0;
-                twist_pub.publish(move_cmd);
-                ros::Duration(1.0).sleep();
-
-                state = RUN4;
                     
+
+                    // 比例制御で近づき、近づき終えたら停止
+                    go_position(goal);
+                    if (near_position(goal))
+                    {
+                        twist.linear.x = 0.0;
+                        twist.angular.z = 0.0;
+                        state = RUN4;
+                        twist_pub.publish(twist);
+                        break;
+                    }
+                    twist_pub.publish(twist);
+
+                    loop_rate.sleep();
+                } 
+                
                 
                 break;
 
             case RUN4:
-                // 初期位置を保存
-                start_x = current_x;
-                start_y = current_y;
-                target_distance = 4 * std::sqrt(2); // 目標距離
-                move_distance = 0.0; // 移動距離
-                cmd_vel_odom.linear.x= -0.25;
-                cmd_vel_odom.linear.y = 0.25;
+                current_state = RUN4;
+                ROS_INFO("RUN4");
+                
+                goal.pose.position.x = 1.0;  // ターゲットのx座標
+                goal.pose.position.y = 1.5;
 
-                move_cmd = transformTwistToBaseLink(cmd_vel_odom);
-                while(move_distance < target_distance) {
+                while (ros::ok())
+                {
+                    ros::spinOnce();
                     if(is_obstacle){
-                        current_state = RUN4;
-                        state = AVOIDANCE;
+                        state = STOP;
                         break;
-                    } else {
-                        twist_pub.publish(move_cmd);
-                        rate.sleep();
-                        move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
                     }
-                }
-
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = 0.0;
-                twist_pub.publish(move_cmd);
-                ros::Duration(1.0).sleep();
-
-                state = RUN5;
                     
+
+                    // 比例制御で近づき、近づき終えたら停止
+                    go_position(goal);
+                    if (near_position(goal))
+                    {
+                        twist.linear.x = 0.0;
+                        twist.angular.z = 0.0;
+                        state = RUN5;
+                        twist_pub.publish(twist);
+                        break;
+                    }
+                    twist_pub.publish(twist);
+
+                    loop_rate.sleep();
+                }
+               
+                
                 
                 break;
 
             case RUN5:
-                // 初期位置を保存
-                start_x = current_x;
-                start_y = current_y;
-                target_distance = 1.0; // 目標距離
-                move_distance = 0.0; // 移動距離
-                cmd_vel_odom.linear.x= -0.5;
+                current_state = RUN5;
+                ROS_INFO("RUN5");
+                goal.pose.position.x = 0.0;  // ターゲットのx座標
+                goal.pose.position.y = 0.0;
 
-                move_cmd = transformTwistToBaseLink(cmd_vel_odom);
-                while(move_distance < target_distance) {
+                while (ros::ok())
+                {
+                    ros::spinOnce();
                     if(is_obstacle){
-                        current_state = RUN5;
-                        state = AVOIDANCE;
+                        state = STOP;
                         break;
-                    } else {
-                        twist_pub.publish(move_cmd);
-                        rate.sleep();
-                        move_distance = std::sqrt(pow(current_x - start_x, 2) + pow(current_y - start_y, 2));
                     }
-                }
-
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = 0.0;
-                twist_pub.publish(move_cmd);
-                ros::Duration(1.0).sleep();
-
-
-                state = FINISH;
                     
+
+                    // 比例制御で近づき、近づき終えたら停止
+                    go_position(goal);
+                    if (near_position(goal))
+                    {
+                        twist.linear.x = 0.0;
+                        twist.angular.z = 0.0;
+                        state = FINISH;
+                        twist_pub.publish(twist);
+                        break;
+                    }
+                    twist_pub.publish(twist);
+
+                    loop_rate.sleep();
+                }
+                                    
                 
                 break;
 
             case AVOIDANCE:
-                radius = 1.0;  // 円の半径
-                angular_speed = 0.2;  // 角速度（回転速度）
-                arc_length = M_PI * radius;  // 円周の長さ
+                ROS_INFO("AVOIDANCE");
+                ROS_INFO("avoidance1");
+                distance1 = 1.0;
+                moveAvoidance(twist_pub, distance1, true);
 
-                move_cmd.linear.x = 0.0;
-                move_cmd.angular.z = angular_speed;
+                ROS_INFO("avoidance2");
+                distance2 = 2.0;
+                moveAvoidance(twist_pub, distance2, false);
 
-                move_distance = 0.0;
+                ROS_INFO("avoidance3");
+                distance3 = 1.0;
+                moveAvoidance(twist_pub, distance3, false);
 
-                start_time = ros::Time::now().toSec();
+                is_obstacle=false;
 
-                while (move_distance < arc_length) {
-                    current_time = ros::Time::now().toSec();
-                    elapsed_time = current_time - start_time;
-
-                    // 円周上を移動
-                    angle = fmod(angular_speed * elapsed_time, 2.0 * M_PI);
-                    move_cmd.linear.x = radius * cos(angle);
-                    move_cmd.linear.y = radius * sin(angle);
-                    move_distance = angle * radius;
-
-                    twist_pub.publish(move_cmd);
-
-                    rate.sleep();
-                }
-
-                is_obstacle = false;
-
-                state = STOP;         
-
+                state = current_state; 
+                ROS_INFO("state: %d", state);        
                 break;
             
             case FINISH:
@@ -332,8 +498,6 @@ int main(int argc, char **argv)
             default:
                 break;
         }
-		ros::spinOnce();
-		rate.sleep();
 	}
 
 	return 0;
