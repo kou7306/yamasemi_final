@@ -34,7 +34,7 @@ tf::TransformListener* tf_listener;
 geometry_msgs::Twist move_cmd;
 geometry_msgs::Twist cmd_vel_odom;
 geometry_msgs::Point target_point;
-geometry_msgs::Point odom_point;
+geometry_msgs::Point current_pose;
 geometry_msgs::Point target;
 geometry_msgs::Point current_point;
 
@@ -42,29 +42,30 @@ geometry_msgs::Point current_point;
 geometry_msgs::TransformStamped global_transform;
 tf::StampedTransform transform_tf;
 
+//現在位置の取得
 void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
 {
-    odom_point.x = msg->pose.pose.position.x;
-    odom_point.y = msg->pose.pose.position.y;
+    current_pose = msg.pose.pose
 }
 
 
-// tfメッセージのコールバック関数
-void tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg)
-{
-    // メッセージからtransformを抽出
-    for (const auto& transform: msg->transforms)
-    {
-        if (transform.child_frame_id == "base_link" && transform.header.frame_id == "odom")
-        {
-            // odomからbase_linkへの変換情報を見つけたら、グローバル変数に格納
-            global_transform = transform;
-            break;
-        }
-    }
-}
+// // tfメッセージのコールバック関数
+// void tfCallback(const tf2_msgs::TFMessage::ConstPtr& msg)
+// {
+//     // メッセージからtransformを抽出
+//     for (const auto& transform: msg->transforms)
+//     {
+//         if (transform.child_frame_id == "base_link" && transform.header.frame_id == "odom")
+//         {
+//             // odomからbase_linkへの変換情報を見つけたら、グローバル変数に格納
+//             global_transform = transform;
+//             break;
+//         }
+//     }
+// }
 
 
+//　障害物検知
 void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
 {
     // scan data
@@ -95,11 +96,11 @@ void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
 
 
 // odom座標系からbase_link座標系への変換関数
-geometry_msgs::Point transformPointToBaseLink(const geometry_msgs::Point& point_odom)
-{
-    geometry_msgs::Point point_base_link;
+// geometry_msgs::Point transformPointToBaseLink(const geometry_msgs::Point& point_odom)
+// {
+//     geometry_msgs::Point point_base_link;
 
-    tf::StampedTransform transform;
+//     tf::StampedTransform transform;
     // try
     // {
     //     tf_listener->lookupTransform("odom", "base_link", ros::Time(0), transform);
@@ -123,16 +124,16 @@ geometry_msgs::Point transformPointToBaseLink(const geometry_msgs::Point& point_
     // // ここで変換を行います
     // tf::Vector3 point_base_link_tf = transform_tf * point_odom_tf;
 
-    point_base_link.x = point_odom.x-odom_point.x;
-    point_base_link.y = point_odom.y-odom_point.y;
+//     point_base_link.x = point_odom.x-odom_point.x;
+//     point_base_link.y = point_odom.y-odom_point.y;
 
 
-    return point_base_link;
-}
+//     return point_base_link;
+// }
 
 
 
-void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twist_pub, tf::TransformListener& tf_listener)
+void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twist_pub)
 {
     // 現在のロボットの位置を取得
     geometry_msgs::Point current_point;
@@ -142,13 +143,32 @@ void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twis
     current_point.z = 0.0; 
 
     // ターゲット座標をベースリンク座標系に変換
-    geometry_msgs::Point target_base_link = transformPointToBaseLink(target_point);
+    // geometry_msgs::Point target_base_link = transformPointToBaseLink(target_point);
 
-    ROS_INFO("target_base_link: (%f, %f)", target_base_link.x, target_base_link.y);
+    // ROS_INFO("target_base_link: (%f, %f)", target_base_link.x, target_base_link.y);
     ROS_INFO("odom_point: (%f, %f)", odom_point.x, odom_point.y);
 
     start_x = odom_point.x;
     start_y = odom_point.y;
+    double distance_to_target = std::sqrt((target_point.x - current_pose.position.x)**2 +
+                                       (target_point.y - current_pose.position.y)**2);
+    
+    double angle_to_target = std::atan2(target_point.y - current_pose.position.y,
+                                    target_point.x - current_pose.position.x)
+  
+    angle_to_target = std::tan2(math.sin(angle_to_target), math.cos(angle_to_target))
+
+    double time_to_rotate = std::abs(angle_to_target) / 0.5; 
+
+    ros::Time start_time = ros::Time::now();
+
+    while(ros::ok() &&  (ros::Time::now() - start_time).toSec() < time_to_rotate){
+        geometry_msgs::Twist twist;
+        twist.angular.z = 0.5;
+         
+    }
+
+
 
     // 移動速度を設定
     speed= 0.3;  // 移動速度 0.5m/s
@@ -211,16 +231,14 @@ void moveToTarget(const geometry_msgs::Point& target_point, ros::Publisher& twis
 }
 
 
-void moveAvoidance(ros::Publisher& twist_pub,const geometry_msgs::Point& target,const bool form)
+void moveAvoidance(ros::Publisher& twist_pub,const double distance,const bool form)
 {
     // 移動速度を設定
     speed= 0.2;  // 移動速度 0.5m/s
-    current_point.x = 0.0;
-    current_point.y = 0.0;
-    current_point.z = 0.0; 
+    double current_distance = 0.0
 
     // ロボットを目標座標に向かって移動させる
-    while (ros::ok() && std::abs(target.y)-current_point.y > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
+    while (ros::ok() && distance - current_distance > 0.1) {  // 0.1m未満の距離になるまで移動を続ける
         geometry_msgs::Twist cmd_vel;
         // 目標角度を計算
         if(form == true){
@@ -254,17 +272,17 @@ void moveAvoidance(ros::Publisher& twist_pub,const geometry_msgs::Point& target,
         // 移動速度を設定
         cmd_vel.angular.z = 0.0;  // 回転速度は0に戻す
         cmd_vel.linear.x = speed;
+        cmd_vel.lineer.y = 0.0;
 
         // メッセージを配信して移動を行う
         twist_pub.publish(cmd_vel);
         ros::Duration(0.1).sleep();
 
 
-        current_point.y = current_point.y + 0.1 * speed;
+        current_distance = current_distance + 0.1 * speed;
     }
+
     flag=true;
-
-
 
     // 移動を停止
     geometry_msgs::Twist stop_cmd;
@@ -411,20 +429,16 @@ int main(int argc, char **argv)
             case AVOIDANCE:
                 ROS_INFO("AVOIDANCE");
                 ROS_INFO("avoidance1");
-                target.x = 0.0;  // ターゲットのx座標
-                target.y = 1.0 ;  // ターゲットのy座標
-                moveAvoidance(twist_pub,target,true);
+                double distance1 = 1.0;
+                moveAvoidance(twist_pub, distance1, true);
 
                 ROS_INFO("avoidance2");
-                target.x = 0.0;  // ターゲットのx座標
-                target.y = -2.0;  // ターゲットのy座標
+                double distance2 = 2.0;
+                moveAvoidance(twist_pub, distance2, false);
 
-                moveAvoidance(twist_pub,target,false);
                 ROS_INFO("avoidance3");
-                target.x = 0.0;  // ターゲットのx座標
-                target.y = -1.0;  // ターゲットのy座標   
-                moveAvoidance(twist_pub,target,false);
-                is_obstacle=false;
+                double distance3 = 1.0;
+                moveAvoidance(twist_pub, distance3, false);
 
                 state = current_state;         
 
