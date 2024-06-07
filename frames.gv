@@ -1,0 +1,8 @@
+digraph G {
+"odom" -> "base_link"[label="Broadcaster: /ypspur_ros\nAverage rate: 198.621 Hz\nMost recent transform: 1717657832.974 ( 0.008 sec old)\nBuffer length: 4.994 sec\n"];
+"map" -> "odom"[label="Broadcaster: /gmapping\nAverage rate: 20.202 Hz\nMost recent transform: 1717657833.022 ( -0.040 sec old)\nBuffer length: 4.950 sec\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1717657832.982"[ shape=plaintext ] ;
+ }->"map";
+}
