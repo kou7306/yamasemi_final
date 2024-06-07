@@ -35,6 +35,7 @@ geometry_msgs::Point target;
 geometry_msgs::Point current_point;
 ros::Time start_time;
 double robot_x, robot_y;
+double prev_point_x, prev_point_y;
 double roll, pitch, yaw;
 geometry_msgs::Quaternion robot_r;
 
@@ -58,13 +59,13 @@ void obstacleDetect(const sensor_msgs::LaserScan::ConstPtr& msg)
     scan = *msg;
 
     double obstacle_distance = 0.5; // 障害物と判定する距離
-
+    is_obstacle = false;
 
     // 正面のレーザーを取得し、障害物があるか判定
     for (int i = 0; i < scan.ranges.size(); i++)
     {
         double angle=std::fabs(scan.angle_min + scan.angle_increment * i);
-        if(i > scan.ranges.size()/2 -15 && i < scan.ranges.size()/2 + 15)
+        if(i > scan.ranges.size()/2 -30 && i < scan.ranges.size()/2 + 30)
         {
             // nan値を除外し、範囲内かつ障害物距離よりも小さい場合に障害物を検知
             if (!std::isnan(scan.ranges[i]) && scan.ranges[i] < obstacle_distance && scan.ranges[i] > 0.2) {
@@ -105,7 +106,7 @@ bool near_position(geometry_msgs::PoseStamped goal)
     // ROS_INFO("goal_y: %f", goal.pose.position.y);
 	double difx = robot_x - goal.pose.position.x;
 	double dify = robot_y - goal.pose.position.y;
-	return (sqrt(difx * difx + dify * dify) < 0.01);
+	return (sqrt(difx * difx + dify * dify) < 0.05);
 }
 
 
@@ -117,6 +118,11 @@ void go_position(geometry_msgs::PoseStamped goal)
 	// 指令する速度と角速度
 	double v = 0.0;
 	double w = 0.0;
+
+    ROS_INFO("goal_x: %f", goal.pose.position.x);
+    ROS_INFO("goal_y: %f", goal.pose.position.y);
+    ROS_INFO("robot_x: %f", robot_x);
+    ROS_INFO("robot_y: %f", robot_y);
 
 	//　角速度の計算
 	double theta = atan2(goal.pose.position.y - robot_y, goal.pose.position.x - robot_x);
@@ -140,6 +146,8 @@ void go_position(geometry_msgs::PoseStamped goal)
 	}
 
 	theta = theta - yaw; //thetaに目標とする点に向くために必要となる角度を格納
+
+    ROS_INFO("theta: %f", theta);
 
 	while (theta <= -M_PI || M_PI <= theta)
 	{
@@ -375,7 +383,7 @@ int main(int argc, char **argv)
                 ROS_INFO("RUN3");
                 
                 goal.pose.position.x = 3.0;  // ターゲットのx座標
-                goal.pose.position.y = -1.5;
+                goal.pose.position.y = -1.0;
 
                 while (ros::ok())
                 {
@@ -408,8 +416,8 @@ int main(int argc, char **argv)
                 current_state = RUN4;
                 ROS_INFO("RUN4");
                 
-                goal.pose.position.x = 1.5;  // ターゲットのx座標
-                goal.pose.position.y = 1.5;
+                goal.pose.position.x = 1.0;  // ターゲットのx座標
+                goal.pose.position.y = 1.0;
 
                 while (ros::ok())
                 {
@@ -479,7 +487,7 @@ int main(int argc, char **argv)
                 moveAvoidance(twist_pub, distance1, true);
 
                 ROS_INFO("avoidance2");
-                distance2 = 1.2;
+                distance2 = 1.5;
                 moveAvoidance(twist_pub, distance2, false);
 
                 ROS_INFO("avoidance3");
@@ -489,7 +497,8 @@ int main(int argc, char **argv)
                 is_obstacle=false;
 
                 state = current_state; 
-                ROS_INFO("state: %d", state);        
+                ROS_INFO("state: %d", state);    
+                ros::spinOnce();    
                 break;
             
             case FINISH:
